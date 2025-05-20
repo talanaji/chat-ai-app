@@ -1,34 +1,69 @@
 const express = require('express');
 const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
-const { Configuration, OpenAIApi } = require('openai');
 const fs = require('fs');
 const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const { Configuration, OpenAIApi } = require('openai');
 require('dotenv').config();
 
 const app = express();
 app.use(cors({ origin: 'http://localhost:3000' }));
 app.use(express.json());
 
+const CHAT_LOG_DIR = path.join(__dirname, 'chat_logs');
+const SESSION_LIST_FILE = path.join(CHAT_LOG_DIR, 'sessions.json');
 
-app.get('/', (req, res) => {
-  res.send('✅ Backend is running!');
-});
+if (!fs.existsSync(CHAT_LOG_DIR)) fs.mkdirSync(CHAT_LOG_DIR);
 
-// Endpoint to create a new session
+// Create a new session
 app.get('/session', (req, res) => {
   const sessionId = uuidv4();
-  res.json({ sessionId });
+  const title = `Session ${new Date().toLocaleString()}`;
+  const newSession = {
+    id: sessionId,
+    title,
+    createdAt: new Date().toISOString()
+  };
+
+  let sessions = [];
+  if (fs.existsSync(SESSION_LIST_FILE)) {
+    sessions = JSON.parse(fs.readFileSync(SESSION_LIST_FILE));
+  }
+
+  sessions.push(newSession);
+  fs.writeFileSync(SESSION_LIST_FILE, JSON.stringify(sessions, null, 2));
+
+  res.json({ sessionId, title });
 });
 
-// Endpoint to handle chat messages
+// Get all session metadata
+app.get('/sessions', (req, res) => {
+  if (!fs.existsSync(SESSION_LIST_FILE)) {
+    return res.json([]);
+  }
+
+  const sessions = JSON.parse(fs.readFileSync(SESSION_LIST_FILE));
+  res.json(sessions);
+});
+
+// Get specific chat log by sessionId
+app.get('/chat/:sessionId', (req, res) => {
+  const sessionId = req.params.sessionId;
+  const filePath = path.join(CHAT_LOG_DIR, `${sessionId}.json`);
+
+  if (fs.existsSync(filePath)) {
+    const data = JSON.parse(fs.readFileSync(filePath));
+    res.json(data);
+  } else {
+    res.status(200).json([]);
+  }
+});
+
+// Post a new message
 app.post('/chat', async (req, res) => {
   const { message, sessionId } = req.body;
 
   try {
-    if (!message || !sessionId) {
-      return res.status(400).json({ error: 'Missing message or sessionId' });
-    }
     const openai = new OpenAIApi(new Configuration({
       apiKey: process.env.OPENAI_API_KEY
     }));
@@ -37,30 +72,29 @@ app.post('/chat', async (req, res) => {
       model: 'gpt-3.5-turbo',
       messages: [{ role: 'user', content: message }]
     });
-    
+
     const reply = response.data.choices[0].message.content;
 
-    // Log the conversation
-    const logDir = path.join(__dirname, 'chat_logs');
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
-    const sessionFile = path.join(logDir, `${sessionId}.json`);
+    const filePath = path.join(CHAT_LOG_DIR, `${sessionId}.json`);
+    let history = [];
 
-    let log = [];
-    if (fs.existsSync(sessionFile)) {
-      const raw = fs.readFileSync(sessionFile);
-      log = JSON.parse(raw);
+    if (fs.existsSync(filePath)) {
+      history = JSON.parse(fs.readFileSync(filePath));
     }
 
-    log.push({ timestamp: new Date().toISOString(), message, reply });
-    fs.writeFileSync(sessionFile, JSON.stringify(log, null, 2));
+    history.push({
+      timestamp: new Date().toISOString(),
+      message,
+      reply
+    });
 
+    fs.writeFileSync(filePath, JSON.stringify(history, null, 2));
     res.json({ reply });
   } catch (err) {
-    console.error('❌ OpenAI or File Error:', err);
+    console.error('❌ OpenAI Error:', err);
     res.status(500).json({ error: 'Something went wrong.' });
   }
 });
-
 
 app.listen(5050, () => {
   console.log('✅ Server running at http://localhost:5050');

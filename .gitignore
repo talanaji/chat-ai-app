@@ -23,5 +23,5 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 server/.env
-server/chat_logs/e31152c5-0fb8-4520-a29a-adf8e2eaaaef.json
 server/package-lock.json
+server/chat_logs/*
